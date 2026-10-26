@@ -1,0 +1,15 @@
+Django>=5.2,<6
+opencv-python-headless>=4.8
+numpy
+pillow
+qrcode[pil]
+google-auth>=2.30
+google-auth-oauthlib>=1.2
+requests
+python-dotenv
+pillow-heif
+rawpy
+django-storages[s3]>=1.14
+whitenoise>=6.6
+cryptography>=42
+gunicorn>=22
