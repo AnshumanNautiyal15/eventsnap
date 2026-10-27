@@ -1,0 +1,9 @@
+# Installed by deploy/deploy.sh (APP_DIR and APP_USER are filled in).
+[Unit]
+Description=WeddingSnap nightly database backup
+
+[Service]
+Type=oneshot
+User=APP_USER
+WorkingDirectory=APP_DIR
+ExecStart=APP_DIR/.venv/bin/python manage.py backup_db

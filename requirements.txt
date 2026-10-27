@@ -1,15 +1,28 @@
-Django>=5.2,<6
-opencv-python-headless>=4.8
-numpy
-pillow
-qrcode[pil]
-google-auth>=2.30
-google-auth-oauthlib>=1.2
-requests
-python-dotenv
-pillow-heif
-rawpy
-django-storages[s3]>=1.14
-whitenoise>=6.6
-cryptography>=42
-gunicorn>=22
+# Everything the server needs. Install with:  pip install -r requirements.txt
+# Versions are the ones tested with this project (Python 3.11-3.12, Ubuntu 22.04/24.04).
+
+# Web framework and serving
+Django==5.2.18
+gunicorn==26.2.0
+whitenoise==6.12.0
+python-dotenv==1.2.4
+
+# Face detection / recognition and images (incl. HEIC and camera RAW)
+opencv-python-headless==5.0.0.93
+numpy==2.4.6
+pillow==12.3.0
+pillow_heif==1.8.0
+rawpy==0.27.1
+qrcode[pil]==8.2
+
+# Photo storage on Cloudflare R2 (S3-compatible) and database backups to R2
+django-storages[s3]==1.14.6
+boto3==1.43.114
+
+# Encrypting stored secrets
+cryptography==50.0.2
+
+# Google Drive linking (switched off by default, see GOOGLE_DRIVE_ENABLED)
+google-auth==2.61.0
+google-auth-oauthlib==1.5.0
+requests==2.34.2

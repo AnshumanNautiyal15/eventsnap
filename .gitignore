@@ -7,3 +7,5 @@ media/
 .env
 frontend/node_modules/
 frontend/dist/
+staticfiles/
+backups/

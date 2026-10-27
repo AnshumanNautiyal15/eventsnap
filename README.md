@@ -17,6 +17,9 @@ Guests scan a QR code at the wedding, take a selfie, and get back only the photo
 Privacy: selfies are processed in memory and never saved. A guest can only open photos that matched
 their selfie, and photo URLs are random UUIDs. `media/` is not served publicly.
 
+> **Going live?** Follow [DEPLOY.md](DEPLOY.md): step-by-step hosting on a DigitalOcean droplet with HTTPS, Cloudflare R2 and
+> nightly backups (scripts in `deploy/`).
+
 ## Project layout
 
 - `gallery/`: Django app. Face engine (`faces.py`), indexing/sync (`indexing.py`), Google Drive (`drive.py`),
@@ -242,14 +245,14 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 sudo apt install -y python3-venv nginx
 # copy the project (with frontend/dist already built on your computer: `npm run build`; building on a
 # 512 MB droplet can run out of memory), then:
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt gunicorn
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python manage.py migrate && .venv/bin/python manage.py collectstatic --noinput
 ```
 
 Run the app with **one** gunicorn worker (indexing lives inside it) and fewer memory arenas:
 
 ```bash
-MALLOC_ARENA_MAX=2 DJANGO_DEBUG=0 .venv/bin/gunicorn weddingsnap.wsgi -w 1 --threads 4 --timeout 120 -b 127.0.0.1:8000
+MALLOC_ARENA_MAX=2 DJANGO_DEBUG=0 .venv/bin/gunicorn -c gunicorn.conf.py weddingsnap.wsgi
 ```
 
 Put that in a systemd service, have nginx serve `/static/` and proxy everything else to port 8000, add HTTPS
@@ -284,7 +287,7 @@ on the event page.
   from nginx (or add WhiteNoise). Do **not** expose `media/`;
   photos are served through the app's permission check.
 - Indexing runs in a background thread inside the web process, so use **one** gunicorn worker process
-  (threads are fine: `gunicorn weddingsnap.wsgi -w 1 --threads 8`). If the server restarts mid-batch,
+  (`gunicorn.conf.py` sets this up). If the server restarts mid-batch,
   press *Index photos* again or run `index_photos`.
 - Google refresh tokens are stored in the database. Protect it, and consider encrypting that column in production.
 - Speed: roughly 0.1–0.3 s per photo on a laptop CPU, so ~1,000 photos take a few minutes.
@@ -297,5 +300,5 @@ python manage.py test gallery
 FACE_SAMPLE_DIR=/path/to/folder python manage.py test gallery
 ```
 
-The R2 tests run against a local S3-compatible server and need `pip install "moto[server]"` (test-only; they're
+The R2 tests run against a local S3-compatible server and need `pip install -r requirements-dev.txt` (test-only; they're
 skipped without it).

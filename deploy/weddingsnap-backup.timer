@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the WeddingSnap database backup every night
+
+[Timer]
+# 21:00 UTC = 02:30 IST
+OnCalendar=*-*-* 21:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

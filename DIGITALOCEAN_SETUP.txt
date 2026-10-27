@@ -1,0 +1,262 @@
+WEDDINGSNAP - DIGITALOCEAN SETUP, COMMAND BY COMMAND
+====================================================
+
+Run the commands in order. Lines starting with # are notes; don't paste them.
+Change the 3 values in PART 0 to yours. Everything after that is copy-paste.
+(More explanation for each step: DEPLOY.md)
+
+
+----------------------------------------------------------------------
+PART 0 - YOUR VALUES  (on your Mac, in Terminal)
+----------------------------------------------------------------------
+# Fill these in after PART 2 (when you know the droplet IP), then paste them
+# into every new Terminal window you open on your Mac:
+
+export IP=203.0.113.25
+export DOMAIN=photos.yourdomain.com
+export EMAIL=you@youremail.com
+
+
+----------------------------------------------------------------------
+PART 1 - CLOUDFLARE R2  (in the browser, no commands)
+----------------------------------------------------------------------
+# 1. dash.cloudflare.com -> R2 Object Storage -> Create bucket -> name: weddingsnap-prod
+#    (Public access: OFF)
+# 2. Create bucket -> name: weddingsnap-backups
+#    Settings -> Object lifecycle rules -> Add rule -> delete objects 30 days after upload
+# 3. weddingsnap-prod -> Settings -> Object lifecycle rules -> abort incomplete multipart uploads after 1 day
+# 4. R2 -> Manage API tokens -> Create API token
+#      Permissions: Object Read & Write
+#      Buckets: weddingsnap-prod AND weddingsnap-backups
+# 5. Write down: Account ID, Access Key ID, Secret Access Key  (the secret is shown only once)
+
+
+----------------------------------------------------------------------
+PART 2 - SSH KEY + DROPLET  (Mac Terminal + DigitalOcean website)
+----------------------------------------------------------------------
+# Check whether you already have an SSH key:
+ls ~/.ssh/id_ed25519.pub
+
+# Only if that said "No such file": create one (press Enter at every question)
+ssh-keygen -t ed25519
+
+# Show the key. Copy the whole line it prints:
+cat ~/.ssh/id_ed25519.pub
+
+# In DigitalOcean: Create -> Droplets
+#   Region:          Bangalore (BLR1)
+#   Image:           Ubuntu 24.04 (LTS) x64
+#   Size:            Basic -> Regular -> 4 GB / 2 vCPU / 80 GB  ($24/mo)
+#                    (pilot: 2 GB / 1 vCPU, $12/mo; do NOT use the $4 one)
+#   Authentication:  SSH Key -> New SSH Key -> paste the line -> name: my-mac
+#   Extras:          tick Monitoring  (Backups optional, +20%)
+#   Hostname:        weddingsnap-prod
+#   -> Create Droplet, then copy its IPv4 address into PART 0 (IP=...)
+#
+# In DigitalOcean: Networking -> Firewalls -> Create Firewall -> name: weddingsnap-web
+#   Inbound rules: SSH 22, HTTP 80, HTTPS 443  (All IPv4, All IPv6)
+#   Apply to Droplets: weddingsnap-prod -> Create Firewall
+
+
+----------------------------------------------------------------------
+PART 3 - DOMAIN  (at your domain provider's DNS page)
+----------------------------------------------------------------------
+# Add a record:   Type: A    Name: photos    Value: <droplet IP>    TTL: Auto/300
+# (If the domain is on Cloudflare: set it to "DNS only" - grey cloud.)
+
+# Wait a few minutes, then check on your Mac. It must print your droplet IP:
+dig +short $DOMAIN
+
+
+----------------------------------------------------------------------
+PART 4 - TEST LOGIN  (Mac Terminal)
+----------------------------------------------------------------------
+ssh root@$IP
+# type "yes" the first time; once you see the server prompt, leave again:
+exit
+
+
+----------------------------------------------------------------------
+PART 5 - PUSH YOUR LATEST CODE  (Mac Terminal)
+----------------------------------------------------------------------
+cd "/Users/anshumannautiyal/Documents/image detection"
+
+git add -A
+git commit -m "Production deployment files"
+git push
+
+
+----------------------------------------------------------------------
+PART 6 - CLONE ON THE DROPLET  (on the droplet)
+----------------------------------------------------------------------
+ssh root@$IP
+
+# Now you're ON THE DROPLET. Set the values here too (same as PART 0):
+export DOMAIN=photos.yourdomain.com
+export EMAIL=you@youremail.com
+
+# Your repo is private, so give the droplet read-only access with a "deploy key":
+ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
+cat ~/.ssh/id_ed25519.pub
+# GitHub -> your repo (eventsnap) -> Settings -> Deploy keys -> Add deploy key
+#   Title: digitalocean-droplet, Key: paste the line, leave "Allow write access" UNticked -> Add key
+
+ssh -T git@github.com
+# type "yes"; it should say "You've successfully authenticated"
+
+# The app must live in /srv/weddingsnap (not inside /root).
+# If you ALREADY cloned it somewhere else (e.g. /root/eventsnap), move it instead of cloning again:
+#   mv /root/eventsnap /srv/weddingsnap
+git clone git@github.com:AnshumanNautiyal15/eventsnap.git /srv/weddingsnap
+
+cd /srv/weddingsnap
+
+
+----------------------------------------------------------------------
+PART 7 - FIRST DEPLOY RUN  (on the droplet)
+----------------------------------------------------------------------
+sudo bash deploy/deploy.sh $DOMAIN $EMAIL
+
+# Installs Python, Node (for building the app screens), nginx, swap; creates
+# /srv/weddingsnap/.env with your domain and fresh secret keys, then STOPS.
+
+sudo nano /srv/weddingsnap/.env
+
+# Fill in these lines with the values from PART 1:
+#   R2_ACCOUNT_ID=...
+#   R2_ACCESS_KEY_ID=...
+#   R2_SECRET_ACCESS_KEY=...
+#   R2_BUCKET=weddingsnap-prod
+#   BACKUP_R2_BUCKET=weddingsnap-backups
+# Save: Ctrl+O then Enter.  Exit: Ctrl+X
+
+
+----------------------------------------------------------------------
+PART 8 - SECOND DEPLOY RUN  (on the droplet)
+----------------------------------------------------------------------
+sudo bash deploy/deploy.sh $DOMAIN $EMAIL
+
+# Takes several minutes the first time: Python packages, building the app, database,
+# gunicorn service, nightly backups, nginx, firewall, HTTPS.
+# It must end with:   gunicorn is running. Site: https://photos.yourdomain.com
+
+
+----------------------------------------------------------------------
+PART 9 - CREATE YOUR ADMIN LOGIN  (on the droplet)
+----------------------------------------------------------------------
+sudo -u weddingsnap /srv/weddingsnap/.venv/bin/python /srv/weddingsnap/manage.py createsuperuser
+
+# Choose username + strong password. This is YOUR login for https://<domain>/admin/
+
+
+----------------------------------------------------------------------
+PART 10 - CHECK EVERYTHING  (on the droplet)
+----------------------------------------------------------------------
+systemctl status weddingsnap --no-pager
+
+curl -s https://$DOMAIN/healthz
+# must print: ok
+
+sudo -u weddingsnap /srv/weddingsnap/.venv/bin/python /srv/weddingsnap/manage.py backup_db
+# must end with: Uploaded to r2://weddingsnap-backups/db/...
+
+systemctl list-timers weddingsnap-backup --no-pager
+
+# In the browser:
+#   1. https://<domain>/admin/  -> log in -> Photographers -> Add photographer (set storage GB)
+#   2. Private window: https://<domain>  -> log in as that photographer
+#      -> create event -> upload photos -> press "Index photos"
+#   3. Scan the event QR with your phone -> selfie -> your photos appear
+#   4. uptimerobot.com -> add HTTP monitor for https://<domain>/healthz  (free alerts)
+
+exit
+
+
+======================================================================
+LATER: UPDATING TO A NEW VERSION
+======================================================================
+# On your Mac: commit and push your changes
+cd "/Users/anshumannautiyal/Documents/image detection"
+git add -A
+git commit -m "Describe your change"
+git push
+
+# On the droplet:
+ssh root@$IP
+cd /srv/weddingsnap && sudo bash deploy/deploy.sh update
+# backs up the database, git pull, installs packages, rebuilds the app screens, migrates,
+# restarts gunicorn. Ends with: gunicorn is running.
+
+
+======================================================================
+EVERYDAY COMMANDS  (on the droplet)
+======================================================================
+# Is the app running?
+systemctl status weddingsnap --no-pager
+
+# Live logs (Ctrl+C to stop)
+journalctl -u weddingsnap -f
+
+# Last 50 log lines
+journalctl -u weddingsnap -n 50 --no-pager
+
+# Restart the app (gunicorn)
+sudo systemctl restart weddingsnap
+
+# gunicorn settings (threads, timeout): /srv/weddingsnap/gunicorn.conf.py, then restart
+
+# Index all waiting photos from the command line
+sudo -u weddingsnap /srv/weddingsnap/.venv/bin/python /srv/weddingsnap/manage.py index_photos
+
+# Backup now
+sudo -u weddingsnap /srv/weddingsnap/.venv/bin/python /srv/weddingsnap/manage.py backup_db
+
+# Memory and disk
+free -h
+df -h /
+
+# HTTPS certificate renewal test (renews automatically)
+sudo certbot renew --dry-run
+
+
+======================================================================
+RESTORE THE DATABASE FROM A BACKUP  (on the droplet)
+======================================================================
+# See available backups:
+ls -lh /srv/weddingsnap/backups/
+
+# Replace the file name below with the one you want:
+sudo systemctl stop weddingsnap
+cd /srv/weddingsnap
+sudo -u weddingsnap cp db.sqlite3 db.sqlite3.before-restore
+sudo -u weddingsnap sh -c 'gunzip -c backups/weddingsnap-YYYY-MM-DD-HHMMSS.sqlite3.gz > db.sqlite3'
+sudo rm -f db.sqlite3-wal db.sqlite3-shm
+sudo systemctl start weddingsnap
+
+
+======================================================================
+IF SOMETHING GOES WRONG
+======================================================================
+# setup.sh fails at the HTTPS step:
+#   -> DNS not pointing at the droplet yet:  dig +short $DOMAIN   must show the droplet IP
+#   -> or ports 80/443 not open in the DigitalOcean Firewall. Fix, then run setup.sh again.
+#
+# Site shows "502 Bad Gateway":
+journalctl -u weddingsnap -n 50 --no-pager
+#   -> usually a typo in /srv/weddingsnap/.env. Fix it, then:
+sudo systemctl restart weddingsnap
+#
+# "Cloudflare R2 is partly configured" in the logs:
+#   -> one of the R2_ values in .env is empty
+#
+# Upload fails with error 413 (too large):
+sudo nano /etc/nginx/sites-available/weddingsnap
+#   -> raise client_max_body_size, save, then:
+sudo systemctl reload nginx
+#
+# Can't SSH in:
+#   -> DigitalOcean -> droplet -> Access -> Launch Droplet Console (terminal in the browser)
+#
+# Indexing too slow:
+#   -> DigitalOcean -> droplet -> Resize -> "CPU and RAM only" -> 8 GB / 4 vCPU
+#      (the app uses the extra cores automatically after restart)

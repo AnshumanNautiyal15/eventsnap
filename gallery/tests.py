@@ -16,7 +16,7 @@ from django.contrib.auth.models import User
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import CommandError, call_command
-from django.test import TestCase, override_settings
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from PIL import Image, ImageEnhance
 
@@ -864,3 +864,34 @@ class DriveSwitchedOffTests(MediaTestCase):
         with mock.patch.object(indexing, "start_drive_sync") as start:
             indexing.maybe_auto_sync(self.event)
         start.assert_not_called()
+
+
+@unittest.skipUnless(ThreadedMotoServer, "pip install 'moto[server]' to test R2 backups")
+class BackupTests(TransactionTestCase):  # backup needs no open test transaction
+    def test_backup_db_saves_locally_and_uploads_to_r2(self):
+        import boto3
+        import gzip as gzip_mod
+        import sqlite3
+        server = ThreadedMotoServer(ip_address="127.0.0.1", port=0)
+        server.start()
+        self.addCleanup(server.stop)
+        host, port = server.get_host_and_port()
+        endpoint = f"http://{host}:{port}"
+        s3 = boto3.client("s3", endpoint_url=endpoint, region_name="us-east-1",
+                          aws_access_key_id="k", aws_secret_access_key="s")
+        s3.create_bucket(Bucket="backups")
+        User.objects.create_user("in-the-backup", password="pw-for-tests-only")
+        out = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, out, True)
+        with override_settings(BACKUP_R2_BUCKET="backups", R2_ENDPOINT=endpoint, R2_ACCESS_KEY_ID="k",
+                               R2_SECRET_ACCESS_KEY="s"):
+            for _ in range(3):
+                call_command("backup_db", dir=out, keep=2, stdout=io.StringIO())
+        files = sorted(Path(out).glob("*.gz"))
+        self.assertLessEqual(len(files), 2)
+        restored = Path(out) / "restored.sqlite3"
+        restored.write_bytes(gzip_mod.open(files[-1]).read())
+        names = [r[0] for r in sqlite3.connect(restored).execute("select username from auth_user")]
+        self.assertIn("in-the-backup", names)
+        keys = [o["Key"] for o in s3.list_objects_v2(Bucket="backups")["Contents"]]
+        self.assertTrue(all(k.startswith("db/weddingsnap-") for k in keys))
